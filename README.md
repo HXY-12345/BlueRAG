@@ -1,7 +1,6 @@
 <p align="center">
-  <img src="assets/logo.png" alt="BlueRAG Logo" width="160" />
+  <img src="assets/logo.png" alt="BlueRAG Logo" width="300" />
 </p>
-
 <h1 align="center">BlueRAG</h1>
 
 <p align="center">
