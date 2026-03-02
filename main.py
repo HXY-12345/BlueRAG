@@ -30,8 +30,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class RecipeRAGSystem:
-    """食谱RAG系统主类"""
+class BlueRAGSystem:
+    """BlueRAG: 蓝队知识库检索增强助手"""
 
     def __init__(self, config: RAGConfig = None):
         """
@@ -121,8 +121,7 @@ class RecipeRAGSystem:
         print(f"\n📊 知识库统计:")
         print(f"   文档总数: {stats['total_documents']}")
         print(f"   文本块数: {stats['total_chunks']}")
-        print(f"   文档类型: {list(stats['categories'].keys())}")
-        print(f"   难度分布: {stats['difficulties']}")
+        print(f"   文档类型: {list(stats['file_types'].keys())}")
 
         print("✅ 知识库构建完成！")
     
@@ -156,12 +155,16 @@ class RecipeRAGSystem:
             print("🤖 智能分析查询...")
             rewritten_query = self.generation_module.query_rewrite(question)
         
-        # 3. 检索相关子块（自动应用元数据过滤）
+        # 3. 检索相关子块（支持元数据过滤，为空时回退到混合检索）
         print("🔍 检索相关文档...")
         filters = self._extract_filters_from_query(question)
         if filters:
             print(f"应用过滤条件: {filters}")
             relevant_chunks = self.retrieval_module.metadata_filtered_search(rewritten_query, filters, top_k=self.config.top_k)
+            # 过滤结果为空时回退到混合检索
+            if not relevant_chunks:
+                print("过滤结果为空，回退到混合检索...")
+                relevant_chunks = self.retrieval_module.hybrid_search(rewritten_query, top_k=self.config.top_k)
         else:
             relevant_chunks = self.retrieval_module.hybrid_search(rewritten_query, top_k=self.config.top_k)
 
@@ -169,16 +172,17 @@ class RecipeRAGSystem:
         if relevant_chunks:
             chunk_info = []
             for chunk in relevant_chunks:
-                dish_name = chunk.metadata.get('dish_name', '未知菜品')
+                # 获取文档标题
+                doc_title = chunk.metadata.get('title') or chunk.metadata.get('file_name', '未知文档')
                 # 尝试从内容中提取章节标题
                 content_preview = chunk.page_content[:50].replace('\n', ' ').strip()
                 if content_preview.startswith('#'):
                     # 如果是标题开头，提取标题
                     title_end = content_preview.find('\n') if '\n' in chunk.page_content[:100] else len(content_preview)
                     section_title = chunk.page_content[:title_end].strip('#').strip()
-                    chunk_info.append(f"{dish_name}({section_title})")
+                    chunk_info.append(f"{doc_title}({section_title})")
                 else:
-                    chunk_info.append(f"{dish_name}(内容片段)")
+                    chunk_info.append(f"{doc_title}(内容片段)")
 
             print(f"找到 {len(relevant_chunks)} 个相关文档块: {', '.join(chunk_info)}")
         else:
@@ -186,19 +190,19 @@ class RecipeRAGSystem:
 
         # 4. 检查是否找到相关内容
         if not relevant_chunks:
-            return "抱歉，没有找到相关的食谱信息。请尝试其他菜品名称或关键词。"
+            return "抱歉，没有找到相关的安全知识信息。请尝试其他关键词。"
 
         # 5. 根据路由类型选择回答方式
         if route_type == 'list':
-            # 列表查询：直接返回菜品名称列表
-            print("📋 生成菜品列表...")
+            # 列表查询：直接返回文档名称列表
+            print("📋 生成知识条目列表...")
             relevant_docs = self.data_module.get_parent_documents(relevant_chunks)
 
             # 显示找到的文档名称
             doc_names = []
             for doc in relevant_docs:
-                dish_name = doc.metadata.get('dish_name', '未知菜品')
-                doc_names.append(dish_name)
+                doc_title = doc.metadata.get('title') or doc.metadata.get('file_name', '未知文档')
+                doc_names.append(doc_title)
 
             if doc_names:
                 print(f"找到文档: {', '.join(doc_names)}")
@@ -206,19 +210,19 @@ class RecipeRAGSystem:
             return self.generation_module.generate_list_answer(question, relevant_docs)
         else:
             # 详细查询：获取完整文档并生成详细回答
-            print("获取完整文档...")
+            print("📚 获取完整文档内容...")
             relevant_docs = self.data_module.get_parent_documents(relevant_chunks)
 
             # 显示找到的文档名称
             doc_names = []
             for doc in relevant_docs:
-                dish_name = doc.metadata.get('dish_name', '未知菜品')
-                doc_names.append(dish_name)
+                doc_title = doc.metadata.get('title') or doc.metadata.get('file_name', '未知文档')
+                doc_names.append(doc_title)
 
             if doc_names:
-                print(f"找到文档: {', '.join(doc_names)}")
+                print(f"引用来源: {', '.join(doc_names)}")
             else:
-                print(f"对应 {len(relevant_docs)} 个完整文档")
+                print(f"引用 {len(relevant_docs)} 个完整文档")
 
             print("✍️ 生成详细回答...")
 
@@ -235,84 +239,41 @@ class RecipeRAGSystem:
                     return self.generation_module.generate_basic_answer_stream(question, relevant_docs)
                 else:
                     return self.generation_module.generate_basic_answer(question, relevant_docs)
-    
+
+
     def _extract_filters_from_query(self, query: str) -> dict:
-        """
-        从用户问题中提取元数据过滤条件
-        """
+        """从用户问题中提取元数据过滤条件（网络安全相关）"""
         filters = {}
-        # 分类关键词
-        category_keywords = DataPreparationModule.get_supported_categories()
-        for cat in category_keywords:
-            if cat in query:
-                filters['category'] = cat
+        security_domains = ['漏洞', '渗透测试', 'Web安全', '网络安全', '逆向工程',
+                           '密码学', '恶意代码', '应急响应', '安全运维', 'CTF']
+        for domain in security_domains:
+            if domain in query:
+                filters['domain'] = domain
                 break
-
-        # 难度关键词
-        difficulty_keywords = DataPreparationModule.get_supported_difficulties()
-        for diff in sorted(difficulty_keywords, key=len, reverse=True):
-            if diff in query:
-                filters['difficulty'] = diff
-                break
-
         return filters
-    
-    def search_by_category(self, category: str, query: str = "") -> List[str]:
-        """
-        按分类搜索菜品
-        
-        Args:
-            category: 菜品分类
-            query: 可选的额外查询条件
-            
-        Returns:
-            菜品名称列表
-        """
+
+    def search_by_metadata(self, metadata_filter: dict, query: str = "") -> List[str]:
+        """按元数据条件搜索安全知识"""
         if not self.retrieval_module:
             raise ValueError("请先构建知识库")
-        
-        # 使用元数据过滤搜索
-        search_query = query if query else category
-        filters = {"category": category}
-        
-        docs = self.retrieval_module.metadata_filtered_search(search_query, filters, top_k=10)
-        
-        # 提取菜品名称
-        dish_names = []
+        search_query = query if query else " ".join(metadata_filter.values())
+        docs = self.retrieval_module.metadata_filtered_search(
+            search_query, metadata_filter, top_k=10
+        )
+        doc_titles = []
         for doc in docs:
-            dish_name = doc.metadata.get('dish_name', '未知菜品')
-            if dish_name not in dish_names:
-                dish_names.append(dish_name)
-        
-        return dish_names
-    
-    def get_ingredients_list(self, dish_name: str) -> str:
-        """
-        获取指定菜品的食材信息
+            doc_title = doc.metadata.get('title') or doc.metadata.get('file_name', '未知文档')
+            if doc_title not in doc_titles:
+                doc_titles.append(doc_title)
+        return doc_titles
 
-        Args:
-            dish_name: 菜品名称
 
-        Returns:
-            食材信息
-        """
-        if not all([self.retrieval_module, self.generation_module]):
-            raise ValueError("请先构建知识库")
-
-        # 搜索相关文档
-        docs = self.retrieval_module.hybrid_search(dish_name, top_k=3)
-
-        # 生成食材信息
-        answer = self.generation_module.generate_basic_answer(f"{dish_name}需要什么食材？", docs)
-
-        return answer
-    
     def run_interactive(self):
         """运行交互式问答"""
         print("=" * 60)
-        print("🍽️  尝尝咸淡RAG系统 - 交互式问答  🍽️")
+        print("🛡️  网络安全知识RAG系统 - 交互式问答  🛡️")
         print("=" * 60)
-        print("💡 解决您的选择困难症，告别'今天吃什么'的世纪难题！")
+        print("💡 快速查询网络安全知识，获取专业的安全建议！")
         
         # 初始化系统
         self.initialize_system()
@@ -348,24 +309,23 @@ class RecipeRAGSystem:
             except Exception as e:
                 print(f"处理问题时出错: {e}")
         
-        print("\n感谢使用尝尝咸淡RAG系统！")
+        print("\n感谢使用网络安全知识RAG系统！")
 
 
 
 def main():
     """主函数"""
-    rag_system = RecipeRAGSystem()
 
-    # try:
-    #     # 创建RAG系统
-    #     rag_system = RecipeRAGSystem()
+    try:
+        # 创建RAG系统
+        rag_system = BlueRAGSystem()
         
-    #     # 运行交互式问答
-    #     rag_system.run_interactive()
+        # 运行交互式问答
+        rag_system.run_interactive()
         
-    # except Exception as e:
-    #     logger.error(f"系统运行出错: {e}")
-    #     print(f"系统错误: {e}")
+    except Exception as e:
+        logger.error(f"系统运行出错: {e}")
+        print(f"系统错误: {e}")
 
 if __name__ == "__main__":
     main()
