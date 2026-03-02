@@ -106,7 +106,3 @@ python main.py
 ## 🙌 致谢
 
 * LangChain / Unstructured / FAISS / BM25 等开源生态
-
-```
-
----
