@@ -4,7 +4,7 @@
 
 import os
 import logging
-from typing import List
+from typing import List, AsyncGenerator
 
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_openai import ChatOpenAI
@@ -368,3 +368,80 @@ class GenerationIntegrationModule:
             current_length += len(doc_text)
 
         return "\n" + "="*50 + "\n".join(context_parts)
+
+    # ========== 异步流式方法（用于SSE API） ==========
+
+    async def generate_basic_answer_stream_async(self, query: str, context_docs: List[Document]) -> AsyncGenerator[str, None]:
+        """
+        生成基础回答 - 异步流式输出
+
+        Args:
+            query: 用户查询
+            context_docs: 上下文文档列表
+
+        Yields:
+            生成的回答片段
+        """
+        context = self._build_context(context_docs)
+
+        prompt = ChatPromptTemplate.from_template("""
+你是一位专业的知识助手。请根据以下文档信息回答用户的问题。
+
+用户问题: {question}
+
+相关文档信息:
+{context}
+
+请提供详细、准确的回答。如果信息不足，请诚实说明。
+
+回答:""")
+
+        chain = (
+            {"question": RunnablePassthrough(), "context": lambda _: context}
+            | prompt
+            | self.llm
+            | StrOutputParser()
+        )
+
+        for chunk in chain.stream(query):
+            yield chunk
+
+    async def generate_step_by_step_answer_stream_async(self, query: str, context_docs: List[Document]) -> AsyncGenerator[str, None]:
+        """
+        生成详细步骤回答 - 异步流式输出
+
+        Args:
+            query: 用户查询
+            context_docs: 上下文文档列表
+
+        Yields:
+            详细步骤回答片段
+        """
+        context = self._build_context(context_docs)
+
+        prompt = ChatPromptTemplate.from_template("""
+你是一位专业的知识导师。请根据文档信息，为用户提供详细的分步指导。
+
+用户问题: {question}
+
+相关文档信息:
+{context}
+
+请提供详细的、结构化的回答：
+1. 先给出简明扼要的概述
+2. 然后按照逻辑顺序分步骤详细说明
+3. 最后提供关键要点或注意事项
+
+请确保回答准确、实用、易于理解。
+
+回答:""")
+
+        chain = (
+            {"question": RunnablePassthrough(), "context": lambda _: context}
+            | prompt
+            | self.llm
+            | StrOutputParser()
+        )
+
+        for chunk in chain.stream(query):
+            yield chunk
