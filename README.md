@@ -11,13 +11,14 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue" />
   <img src="https://img.shields.io/badge/License-MIT-green" />
-  <img src="https://img.shields.io/badge/RAG-BM25%20%2B%20FAISS-orange" />
+  <img src="https://img.shields.io/badge/RAG-BM25%20%2B%20FAISS%20%7C%20Milvus-orange" />
 </p>
 
 
 ## ✨ 亮点特性
 - **知识入库**：支持 PDF / Word / 网页文本等多源资料解析与清洗
-- **混合检索（Hybrid Retrieval）**：BM25 关键词召回 + FAISS 向量召回提升命中与语义匹配
+- **混合检索（Hybrid Retrieval）**：BM25 关键词召回 + FAISS/Milvus 向量召回提升命中与语义匹配
+- **向量数据库支持**：支持本地 FAISS 索引或 Milvus 分布式向量数据库（可切换）
 - **元数据过滤（Metadata Filter）**：按领域/来源等条件过滤检索结果（可扩展）
 - **生成集成（Grounded Generation）**：将检索证据按模板注入 LLM，减少幻觉并支持引用来源
 - **流式输出**：支持 SSE/Chunked 方式逐步输出回答，便于集成到业务系统
@@ -31,10 +32,16 @@
 .
 ├─ main.py                 # 主入口：交互式问答 + 端到端RAG流程
 ├─ config.py               # 配置：数据路径、embedding模型、LLM模型、top_k等
+├─ milvus_manager.py       # Milvus 管理工具（可选）
 ├─ requirements.txt
+├─ .env.example            # 环境变量示例文件
 ├─ data/                   # 示例数据目录
 ├─ rag_modules/            # 数据准备/索引构建/检索优化/生成集成等模块
-└─ vector_index/           # 向量索引落盘目录（默认）
+│   ├─ index_construction.py    # FAISS 索引构建
+│   ├─ milvus_index.py          # Milvus 向量索引模块
+│   ├─ milvus_retrieval.py      # Milvus 检索模块
+│   └─ ...
+└─ vector_index/           # FAISS 向量索引落盘目录（默认）
 ````
 
 ---
@@ -88,9 +95,61 @@ python main.py
 ## 🧠 RAG 流程简述
 
 1. **Ingestion**：加载并清洗文档，保留来源等元数据
-2. **Indexing**：文本分块 → Embedding → FAISS 向量索引落盘
+2. **Indexing**：文本分块 → Embedding → 向量索引落盘（支持 FAISS/Milvus）
 3. **Retrieval**：混合检索（BM25 + 向量）→ Top-K 证据集合
 4. **Generation**：将证据注入 Prompt → LLM 生成回答（可附带引用/来源字段）
+
+---
+
+## 🔧 Milvus 向量数据库（可选）
+
+本项目支持使用 Milvus 作为向量数据库，适合生产环境的大规模知识库部署。
+
+### 安装 Milvus
+
+使用 Docker 快速部署 Milvus 单机版：
+
+```bash
+docker run -d --name milvus-standalone \
+  -p 19530:19530 \
+  -p 9091:9091 \
+  -v ${PWD}/volumes/milvus:/var/lib/milvus \
+  milvusdb/milvus:latest
+```
+
+### Milvus 配置
+
+在 `.env` 文件中添加 Milvus 连接配置：
+
+```bash
+# Milvus 配置
+MILVUS_URI=http://localhost:19530
+MILVUS_DATABASE=rag_db
+MILVUS_COLLECTION=rag_security_kb
+```
+
+### 使用 Milvus 模块
+
+```python
+from rag_modules.milvus_index import MilvusIndexModule
+from langchain_core.documents import Document
+
+# 初始化 Milvus 索引模块
+index_module = MilvusIndexModule(
+    model_name="BAAI/bge-small-zh-v1.5",
+    milvus_uri="http://localhost:19530",
+    database_name="rag_db"
+)
+
+# 构建向量索引
+index_module.build_vector_index(chunks)
+
+# 相似度搜索
+results = index_module.similarity_search("如何防范 SQL 注入？", k=5)
+
+# 加载已存在的索引
+index_module.load_index()
+```
 
 ---
 
@@ -104,4 +163,5 @@ python main.py
 
 ## 🙌 致谢
 
-* LangChain / Unstructured / FAISS / BM25 等开源生态
+* LangChain / Unstructured / FAISS / BM25 / Milvus 等开源生态
+* [All-in-RAG](https://github.com/datawhalechina/all-in-rag) - 优秀的 RAG 学习项目

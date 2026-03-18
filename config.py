@@ -24,6 +24,11 @@ class RAGConfig:
     temperature: float = 0.1
     max_tokens: int = 2048
 
+    # 向量数据库配置
+    vector_db_type: str = "milvus"  # "faiss" 或 "milvus"
+    milvus_uri: str = "http://localhost:19530"
+    milvus_database: str = "rag_db"
+
     def __post_init__(self):
         """初始化后的处理"""
         pass
@@ -42,7 +47,10 @@ class RAGConfig:
             'llm_model': self.llm_model,
             'top_k': self.top_k,
             'temperature': self.temperature,
-            'max_tokens': self.max_tokens
+            'max_tokens': self.max_tokens,
+            'vector_db_type': self.vector_db_type,
+            'milvus_uri': self.milvus_uri,
+            'milvus_database': self.milvus_database
         }
 
 # 默认配置实例

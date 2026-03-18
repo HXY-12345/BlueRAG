@@ -17,7 +17,9 @@ from rag_modules import (
     DataPreparationModule,
     IndexConstructionModule,
     RetrievalOptimizationModule,
-    GenerationIntegrationModule
+    GenerationIntegrationModule,
+    MilvusIndexModule,
+    MilvusRetrievalOptimizationModule
 )
 
 # 加载环境变量
@@ -62,12 +64,22 @@ class BlueRAGSystem:
         print("初始化数据准备模块...")
         self.data_module = DataPreparationModule(self.config.data_path)
 
-        # 2. 初始化索引构建模块
-        print("初始化索引构建模块...")
-        self.index_module = IndexConstructionModule(
-            model_name=self.config.embedding_model,
-            index_save_path=self.config.index_save_path
-        )
+        # 2. 根据配置初始化索引模块
+        if self.config.vector_db_type.lower() == "milvus":
+            print("初始化Milvus索引模块...")
+            self.index_module = MilvusIndexModule(
+                model_name=self.config.embedding_model,
+                milvus_uri=self.config.milvus_uri,
+                database_name=self.config.milvus_database
+            )
+            self.use_milvus = True
+        else:
+            print("初始化FAISS索引模块...")
+            self.index_module = IndexConstructionModule(
+                model_name=self.config.embedding_model,
+                index_save_path=self.config.index_save_path
+            )
+            self.use_milvus = False
 
         # 3. 初始化生成集成模块
         print("🤖 初始化生成集成模块...")
@@ -86,15 +98,30 @@ class BlueRAGSystem:
         # 1. 尝试加载已保存的索引
         vectorstore = self.index_module.load_index()
 
-        if vectorstore is not None:
-            print("✅ 成功加载已保存的向量索引！")
+        if vectorstore is not None and self.use_milvus:
+            # Milvus: 检查是否有数据
+            if self.index_module.has_data():
+                print("✅ 成功加载Milvus向量索引！")
+                # 仍需要加载文档和分块用于BM25检索
+                print("加载文档...")
+                self.data_module.load_documents()
+                print("进行文本分块...")
+                chunks = self.data_module.chunk_documents()
+            else:
+                print("Milvus索引为空，开始构建新索引...")
+                vectorstore = None
+        elif vectorstore is not None and not self.use_milvus:
+            print("✅ 成功加载已保存的FAISS向量索引！")
             # 仍需要加载文档和分块用于检索模块
             print("加载文档...")
             self.data_module.load_documents()
             print("进行文本分块...")
             chunks = self.data_module.chunk_documents()
         else:
-            print("未找到已保存的索引，开始构建新索引...")
+            vectorstore = None
+
+        if vectorstore is None:
+            print("开始构建新索引...")
 
             # 2. 加载文档
             print("加载文档...")
@@ -106,19 +133,30 @@ class BlueRAGSystem:
 
             # 4. 构建向量索引
             print("构建向量索引...")
-            vectorstore = self.index_module.build_vector_index(chunks)
-
-            # 5. 保存索引
-            print("保存向量索引...")
-            self.index_module.save_index()
+            if self.use_milvus:
+                vectorstore = self.index_module.build_vector_index(chunks)
+            else:
+                vectorstore = self.index_module.build_vector_index(chunks)
+                # 5. 保存FAISS索引
+                print("保存向量索引...")
+                self.index_module.save_index()
 
         # 6. 初始化检索优化模块
         print("初始化检索优化...")
-        self.retrieval_module = RetrievalOptimizationModule(vectorstore, chunks)
+        if self.use_milvus:
+            self.retrieval_module = MilvusRetrievalOptimizationModule(self.index_module, chunks)
 
-        # 7. 显示统计信息
+            # 显示Milvus统计信息
+            stats = self.index_module.get_collection_stats()
+            print(f"\n📊 Milvus知识库统计:")
+            print(f"   Collection: {stats.get('name', 'N/A')}")
+            print(f"   向量数量: {stats.get('row_count', 0)}")
+        else:
+            self.retrieval_module = RetrievalOptimizationModule(vectorstore, chunks)
+
+        # 显示文档统计信息
         stats = self.data_module.get_statistics()
-        print(f"\n📊 知识库统计:")
+        print(f"\n📚 文档统计:")
         print(f"   文档总数: {stats['total_documents']}")
         print(f"   文本块数: {stats['total_chunks']}")
         print(f"   文档类型: {list(stats['file_types'].keys())}")

@@ -32,13 +32,23 @@ class IndexConstructionModule:
     def setup_embeddings(self):
         """初始化嵌入模型"""
         logger.info(f"正在初始化嵌入模型: {self.model_name}")
-        
+
+        # 设置固定的模型缓存目录
+        cache_dir = Path(__file__).parent.parent / "models" / "embeddings"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"模型缓存目录: {cache_dir}")
+
+        # 设置环境变量，确保sentence-transformers也使用相同缓存
+        import os
+        os.environ['SENTENCE_TRANSFORMERS_HOME'] = str(cache_dir)
+
         self.embeddings = HuggingFaceEmbeddings(
             model_name=self.model_name,
+            cache_folder=str(cache_dir),
             model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
-        
+
         logger.info("嵌入模型初始化完成")
     
     def build_vector_index(self, chunks: List[Document]) -> FAISS:
